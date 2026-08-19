@@ -1,0 +1,215 @@
+# TROY Successful Character Create Checkpoint - 2026-08-19
+GitHub README / Checkpoint Metni
+# TROY Successful Character Create Checkpoint - 2026-08-19
+
+## Amaç
+
+Bu doküman, TROY Online client/server geliştirme sürecinde ilk başarılı karakter kayıt alma sürecini kayıt altına alır.
+
+Bu checkpoint, karakter oluşturma akışında en önemli ilerleme noktasıdır:
+
+- Client karakter oluşturma paketi server'a ulaştı.
+- Server paketi işledi.
+- AvatarNameInfo kaydı oluştu.
+- AvatarInfo kaydı oluştu.
+- MasterInfo içinde karakter slotu hesaba bağlandı.
+- Client tarafı `CREATE_RESULT_SERVER2 RESULT_INT=0` aldı.
+
+Bu süreç, sonraki tüm karakter listesi / zone giriş / oyun içi giriş çalışmalarının temel referansıdır.
+
+---
+
+## Başarılı Test Karakteri
+
+| Alan | Değer |
+|---|---|
+| Test karakter adı | `aaaaaa12` |
+| Hesap / uID | `1` |
+| World | `1` |
+| Slot | `aName01` |
+| Create sonucu | `RESULT_INT=0` |
+| EquipLen | `325` |
+| InvLen | `3456` |
+| SkillLen | `180` |
+| QuestLen | `25` |
+
+---
+
+## Başarı Kanıtı
+
+Client create debug log içinde başarılı dönüş:
+
+```text
+CREATE_ENTER_SERVER2_KEY129 POST=0 NAME=aaaaaa12 SOCKET=2284 ENC=0 SENDSIZE=6225 OLD_SENDSIZE=11948 AVATAR_SIZE_CLIENT=11943 AVATAR_SIZE_WIRE=6212 RECV_NEED=6217 OLD_RECV=11945 PROTO=17
+CREATE_SEND_RET_SERVER2 RET=6225 LEFT=6225 SENT=0 SOCKET=2284 WSA=183
+CREATE_RECV_PART_SERVER2 RECV=4096 TOTAL=4096 WIRE_EXPECT=6217 OLD_EXPECT=11945 SOCKET=2284
+CREATE_RECV_PART_SERVER2 RECV=2121 TOTAL=6217 WIRE_EXPECT=6217 OLD_EXPECT=11945 SOCKET=2284
+CREATE_RESULT_SERVER2 RESULT_INT=0 RESULT_CHAR=0 TOTAL=6217 WIRE_EXPECT=6217 NAME=aaaaaa12 SOCKET=2284
+DB doğrulama sonucu:
+AvatarInfo:
+aName      aWorldNumber  uID  aTribe  aGender  aHeadType  aFaceType  aLevel1  aLevel2  EquipLen  InvLen  SkillLen  QuestLen
+aaaaaa12   1             1    0       0        0          0          1        0        325       3456    180       25
+
+MasterInfo:
+uID  aWorldNumber  uSaveMoney  aName01
+1    1             0           aaaaaa12
+
+AvatarNameInfo:
+aUpdateTime          aName
+2026-08-19 23:22:26  aaaaaa12
+Çözülen Ana Sorunlar
+No	Sorun	Durum	Not
+1	Client create packet boyutu eski client struct ile uyumsuzdu	Çözüldü	Client 11943 avatar struct kullanıyor; wire/server tarafı 6212 byte ile işlendi
+2	Server create cevabı eski beklenen boyuta göre okunuyordu	Çözüldü	WIRE_EXPECT=6217 ile doğru cevap okundu
+3	AvatarInfo insert kolon sayısı uyuşmuyordu	Çözüldü	aUpdateTime,uID,aVisibleState,...,aAutoConfig explicit column insert aktif
+4	Karakter adı yanlış parse ediliyordu	Çözüldü	ACTIVE_CREATE_NAME_REMAP_067 aktif
+5	İkinci login/partial state create yolunu bozuyordu	Geçici bypass aktif	ACTIVE_CREATE_SECOND_LOGIN_BYPASS runtime binary içinde mevcut
+6	Silah/equip fallback eksik kalıyordu	Geçici fallback aktif	ACTIVE_CREATE_WEAPON_FALLBACK_067 önceki runtime’da doğrulandı
+7	Servislerin yarım açık kalması create testini bozuyordu	Temiz restart ile düzeldi	login, center, zone, playuser, relay, gamelog, extra birlikte açıldı
+
+
+Aktif Runtime Servisleri
+Temiz restart sonrası çalışan servis zinciri:
+Servis	Port	Durum
+ts2_logind	11091	Açık
+ts2_centerd	11051	Açık
+ts2_zoned	11031	Açık
+ts2_player_userd	11011	Açık
+ts2_relayd	11071	Açık
+ts2_gamelogd	11111 UDP	Açık
+ts2_extrad	22614	Açık
+
+
+Runtime Login Binary İçindeki Kritik Markerlar
+ACTIVE_CREATE_SECOND_LOGIN_BYPASS
+ACTIVE_CREATE_NAME_REMAP_067
+insert into %s (aUpdateTime,uID,aVisibleState,...,aAutoConfig) values (...)
+Bu markerlar, doğru patch edilmiş ts2_logind binary’sinin deploy edildiğini gösterir.
+Şu An Çözülmüş Olan Aşama
+Client Create Screen
+    ↓
+CREATE_ENTER_SERVER2_KEY129
+    ↓
+6225 byte send
+    ↓
+Server receives / maps 6212 byte avatar wire payload
+    ↓
+DB_PROCESS_05
+    ↓
+AvatarNameInfo insert
+    ↓
+AvatarInfo insert
+    ↓
+MasterInfo slot update
+    ↓
+CREATE_RESULT_SERVER2 RESULT_INT=0
+Bu zincir başarılıdır.
+Kalan Ana Sorun
+Karakter oluşturma değil, login sonrası karakter listesi / karakter seçim parser sorunu kaldı.
+Aktif belirti:
+FULL_TRACE_PARTIAL_ACCEPT TOTAL=18732 EXPECT=35902
+Yorum:
+Server login cevabı yaklaşık 18732 byte gönderiyor.
+Client eski struct hesabıyla 35902 byte bekliyor.
+Server avatar block boyutu 6212.
+Client tarafındaki eski AVATAR_INFO struct boyutu yaklaşık 11943.
+Bu nedenle karakter DB’de var olsa bile karakter seçim ekranında görünmeyebilir, model kaybolabilir veya login ekranına geri atabilir.
+Bir Sonraki Teknik Hedef
+Client login response / charlist parser bulunacak ve düzeltilecek.
+Aranacak kaynak alanları:
+S_LOGIN_RECV
+B_LOGIN_RECV
+T_LOGIN_RECV
+LOGIN_RECV
+mSelectAvatarInfo
+CopyMemory(&mMYINFO.mSelectAvatarInfo[...])
+sizeof(AVATAR_INFO)
+35902
+18732
+6212
+11943
+Hedef dönüşüm:
+server avatar block: 6212 byte
+    ↓
+client slot struct: AVATAR_INFO / 11943 byte
+    ↓
+safe field mapping / zero-fill / compatibility adapter
+Test Disiplini
+Artık yeni karakter oluşturma testinde aynı isim kullanılmayacak.
+Başarılı karakter zaten kayıtlıdır:
+uID=1
+character=aaaaaa12
+slot=aName01
+Test için:
+Login ID: 1
+Character: aaaaaa12
+test hesabı farklıdır:
+uID=test
+character=BetaTest
+slot=aName01
+Commit Mesajı Önerisi
+checkpoint: document successful TROY character create flow
+
+- Confirmed first successful CREATE_RESULT_SERVER2 result=0
+- Verified AvatarNameInfo, AvatarInfo and MasterInfo slot persistence
+- Documented active login binary markers and runtime service chain
+- Recorded remaining login charlist packet mismatch: 18732 vs 35902
+- Established next target: server 6212-byte avatar block to client AVATAR_INFO mapping
+Etiketler
+troy-online
+character-create
+avatarinfo
+masterinfo
+login-server
+packet-size
+6212
+11943
+18732
+35902
+checkpoint
+
+---
+
+# Yarın Kullanılacak Devam Prompt’u
+
+```text
+TROY_SUCCESSFUL_CHARACTER_CREATE_CHECKPOINT_20260819 üzerinden devam edelim.
+
+Başarılı create süreci:
+- Test karakteri: aaaaaa12
+- uID: 1
+- World: 1
+- MasterInfo slot: aName01
+- CREATE_RESULT_SERVER2 RESULT_INT=0 doğrulandı.
+- AvatarInfo, AvatarNameInfo ve MasterInfo kayıtları DB’de mevcut.
+- EquipLen=325, InvLen=3456, SkillLen=180, QuestLen=25.
+- Runtime ts2_logind içinde ACTIVE_CREATE_SECOND_LOGIN_BYPASS, ACTIVE_CREATE_NAME_REMAP_067 ve explicit AvatarInfo insert column patch aktif.
+- Tüm servisler clean restart sonrası ayakta: login 11091, center 11051, zone 11031, playuser 11011, relay 11071, gamelog 11111 UDP, extra 22614.
+
+Artık create sorununa dönme. Aynı karakter ismiyle tekrar create denemesi yapma.
+
+Kalan ana sorun:
+Client login sonrası karakter listesinde FULL_TRACE_PARTIAL_ACCEPT TOTAL=18732 EXPECT=35902 görülüyor.
+Server 6212-byte avatar block gönderiyor; client eski AVATAR_INFO struct ile 11943 byte bekliyor.
+Bu yüzden karakter DB’de var ama karakter seçim ekranında görünmüyor / model kayboluyor / login ekranına dönebiliyor.
+
+Hedef:
+Client login response / charlist parser kodunu bul.
+S_LOGIN_RECV, B_LOGIN_RECV, T_LOGIN_RECV, LOGIN_RECV, mSelectAvatarInfo, CopyMemory, sizeof(AVATAR_INFO), 35902, 18732, 6212, 11943 alanlarını incele.
+6212-byte server avatar block’unu client AVATAR_INFO struct’ına güvenli map eden patch hazırla.
+Sonra client build/deploy/test akışına geç.
+GitHub’a koyulacak dosya adı
+docs/TROY_SUCCESSFUL_CHARACTER_CREATE_CHECKPOINT_20260819.md
+GitHub Issue başlığı
+Fix client character-list parser after successful character create
+Issue açıklaması kısa hali
+Successful character creation is now confirmed with `aaaaaa12` on `uID=1`.
+The remaining blocker is not DB persistence or create flow.
+
+Current blocker:
+`FULL_TRACE_PARTIAL_ACCEPT TOTAL=18732 EXPECT=35902`
+
+The client expects old 11943-byte AVATAR_INFO slot blocks, while the server-side login response appears to provide 6212-byte avatar blocks. Implement a safe compatibility mapper from server avatar block to client AVATAR_INFO for the login character-list response.
+Bu checkpoint’i yarın ana referans kabul edeceğiz.
+
+
